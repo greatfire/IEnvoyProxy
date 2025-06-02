@@ -2,6 +2,7 @@ package IEnvoyProxy
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"io/fs"
@@ -453,6 +454,29 @@ func copyLoop(socks, sfconn io.ReadWriter, done chan struct{}) {
 		}
 		done <- struct{}{}
 	}()
+}
+
+// SetEnvoyUrl - a URL to an upstream Envoy server, used by the ECH proxy
+//
+// @param envoyUrl URL to the upstream Envoy server
+// @param echConfigListStr ECH config list data as a string (from DNS)
+func (c *Controller) SetEnvoyUrl(envoyUrl, echConfigListStr string) {
+	echConfigList, err := base64.StdEncoding.DecodeString(echConfigListStr)
+	if err != nil {
+		log.Printf("error decoding echConfigList string, ECH disabled")
+		echConfigList = make([]byte, 0, 0)
+	}
+
+	c.EchEnvoyUrl = envoyUrl
+	c.EchEnvoyEchConfigList = echConfigList
+
+	// parse out the host name so we don't have to do it on every request
+	u, err := url.Parse(envoyUrl)
+	if err != nil {
+		log.Printf("error parsing envoy host name from URL %s", err)
+		return
+	}
+	c.EchEnvoyHost = u.Hostname()
 }
 
 // LocalAddress - Address of the given transport.
@@ -1037,7 +1061,7 @@ func LyrebirdVersion() string {
 
 // SetDOHServer - set the default Go resolver to use DNS over HTTPS with our
 // working server
-func (c *Controller) SetDOHServer(dohServer string) {
+func  SetDOHServer(dohServer string) {
 	log.Printf("Setting default Go DNS resolver to use DOH: %s", dohServer)
 	doh_url := "https://" + dohServer + "/dns-query{?dns}"
 	resolver, r_err := ndns.NewDoHResolver(doh_url)
