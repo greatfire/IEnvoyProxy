@@ -121,6 +121,16 @@ func (p *EnvoyMasqueProxy) handleConnectMasque(c net.Conn, req *http.Request) *m
 		ProtoMinor: 1,
 	}
 
+	// XXX p.relayClient.CreateTCPStream() can panic instead of returning an
+	// error... try to recover
+	//
+	// this doesn't reject the client, but at least keeps us from crashing
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in f", r)
+		}
+	}()
+
 	_, port, err := net.SplitHostPort(req.URL.Host)
 	if err != nil {
 		log.Printf("Failed to split host and port %s", err)
