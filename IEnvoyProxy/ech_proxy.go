@@ -49,6 +49,11 @@ func (s Stopper) Stopped(name string, err error) {
 func (e *EchProxy) startProxy() {
 	log.Printf("starting web server...")
 
+	if (e.ProxyListen == "") {
+		log.Printf("ProxyListen is not set!")
+		return
+	}
+
 	http.HandleFunc("/envoy", e.envoyHandler)
 	http.HandleFunc("/envoy3", e.envoy3Handler)
 
