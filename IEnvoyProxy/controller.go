@@ -10,7 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"path"
+	// "path"
 
 	"fmt"
 	"strconv"
@@ -213,7 +213,7 @@ type Controller struct {
 	EchEnvoyHost	      string
 	// ECH config list data for the Envoy host, likely fetched from DNS
 	EchEnvoyEchConfigList []byte
-	// The Proxy's Envoy URL
+	// Our Proxy's Envoy URL (points to US)
 	EchProxyUrl			  string
 	// instace
 	echProxy 			  *EchProxy
@@ -252,7 +252,7 @@ type Controller struct {
 
 // NewController - Create a new Controller object.
 //
-// @param enableLogging Log to StateDir/ipt.log.
+// @param enableLogging Log to StateDir/iep.log.
 //
 // @param unsafeLogging Disable the address scrubber.
 //
@@ -289,15 +289,15 @@ func NewController(stateDir string, enableLogging, unsafeLogging bool, logLevel 
 		log.Printf("Failed to set up state directory: %s", err)
 		return nil
 	}
-	if err := ptlog.Init(enableLogging,
-		path.Join(c.stateDir, LogFileName), unsafeLogging); err != nil {
-		log.Printf("Failed to set initialize log: %s", err.Error())
-		return nil
-	}
-	if err := ptlog.SetLogLevel(logLevel); err != nil {
-		log.Printf("Failed to set log level: %s", err.Error())
-		ptlog.Warnf("Failed to set log level: %s", err.Error())
-	}
+	// if err := ptlog.Init(enableLogging,
+	// 	path.Join(c.stateDir, LogFileName), unsafeLogging); err != nil {
+	// 	log.Printf("Failed to set initialize log: %s", err.Error())
+	// 	return nil
+	// }
+	// if err := ptlog.SetLogLevel(logLevel); err != nil {
+	// 	log.Printf("Failed to set log level: %s", err.Error())
+	// 	ptlog.Warnf("Failed to set log level: %s", err.Error())
+	// }
 
 	// This should only ever be called once, even when new `Controller` instances are created.
 	var err error
@@ -466,6 +466,8 @@ func (c *Controller) SetEnvoyUrl(envoyUrl, echConfigListStr string) {
 		log.Printf("error decoding echConfigList string, ECH disabled")
 		echConfigList = make([]byte, 0, 0)
 	}
+
+	log.Printf("ECH: %x", echConfigList)
 
 	c.EchEnvoyUrl = envoyUrl
 	c.EchEnvoyEchConfigList = echConfigList
@@ -876,8 +878,14 @@ func (c *Controller) Start(methodName string, proxy string) error {
 		go acceptLoop(f, ln, nil, extraArgs, c.shutdown[methodName], methodName, c.transportStopped)
 
 	case EnvoyEch:
+		log.Printf("Envoy: Sanity pineapple 🍍\n")
 		if !c.echProxyRunning {
 			c.echProxyPort = findPort(c.echProxyPort)
+
+			log.Printf("Envoy: ECH using port %d\n", c.echProxyPort)
+
+			// set this now so we can call LocalAddress :)
+			c.echProxyRunning = true
 
 			c.echProxy = &EchProxy{
 				TestTarget: c.EchTestTarget,
@@ -888,7 +896,7 @@ func (c *Controller) Start(methodName string, proxy string) error {
 				EchConfigList: c.EchEnvoyEchConfigList,
 			}
 
-			c.echProxyRunning = true
+			log.Printf("Envoy: Starting ECH proxy to %s\n", c.echProxy.EnvoyUrl)
 			go c.echProxy.startProxy()
 
 			// wait for it to start
@@ -896,6 +904,7 @@ func (c *Controller) Start(methodName string, proxy string) error {
 
 			// test HTTP/2 and HTTP/3, selecting the one that responds first
 			c.EchProxyUrl = c.echProxy.testHttps()
+			log.Printf("Envoy: Found a working proxy %s\n", c.EchProxyUrl)
 		}
 
 	case Masque:
