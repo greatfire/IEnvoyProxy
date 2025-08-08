@@ -77,6 +77,8 @@ cd "$TMPDIR/IEnvoyProxy" || exit 1
 
 gomobile init
 
+# support 16k pages on Android
+export CGO_LDFLAGS="-O2 -g -s -w -Wl,-z,max-page-size=16384"
 MACOSX_DEPLOYMENT_TARGET=11.0 gomobile bind -target=$TARGET -ldflags="-s -w -checklinkname=0" -o "$CURRENT/$OUTPUT" -iosversion=12.0 -androidapi=21 -v -tags=netcgo -trimpath
 
 ### Note:
