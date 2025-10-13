@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	// "path"
 
 	"fmt"
 	"strconv"
@@ -292,15 +291,15 @@ func NewController(stateDir string, enableLogging, unsafeLogging bool, logLevel 
 		log.Printf("Failed to set up state directory: %s", err)
 		return nil
 	}
-	// if err := ptlog.Init(enableLogging,
-	// 	path.Join(c.stateDir, LogFileName), unsafeLogging); err != nil {
-	// 	log.Printf("Failed to set initialize log: %s", err.Error())
-	// 	return nil
-	// }
-	// if err := ptlog.SetLogLevel(logLevel); err != nil {
-	// 	log.Printf("Failed to set log level: %s", err.Error())
-	// 	ptlog.Warnf("Failed to set log level: %s", err.Error())
-	// }
+	if err := ptlog.Init(enableLogging,
+		path.Join(c.stateDir, LogFileName), unsafeLogging); err != nil {
+		log.Printf("Failed to set initialize log: %s", err.Error())
+		return nil
+	}
+	if err := ptlog.SetLogLevel(logLevel); err != nil {
+		log.Printf("Failed to set log level: %s", err.Error())
+		ptlog.Warnf("Failed to set log level: %s", err.Error())
+	}
 
 	// This should only ever be called once, even when new `Controller` instances are created.
 	var err error
