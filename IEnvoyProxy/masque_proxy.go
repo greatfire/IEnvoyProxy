@@ -10,7 +10,6 @@ upstream MASQUE server
 
 This is really close to being the example code from:
 https://github.com/Invisv-Privacy/masque/blob/main/example/relay-http-proxy/main.go
-converted in to a package
 
 */
 
@@ -48,18 +47,6 @@ type EnvoyMasqueProxy struct {
 	token string
 	insecure bool
 	certData []byte
-}
-
-func NewMasqueProxy() (* EnvoyMasqueProxy) {
-	p := &EnvoyMasqueProxy{
-		UpstreamServer: "masque.smcdonald.us",
-		UpstreamPort: 4443,
-		ListenPort: 27630,
-		insecure: false,
-		token: "SOME FAKE VALUE",
-	}
-
-	return p
 }
 
 func (p *EnvoyMasqueProxy) Start() {
@@ -193,10 +180,6 @@ func (p *EnvoyMasqueProxy) handleReq(c net.Conn) {
 		log.Printf("Failed to read HTTP request %s", err)
 		return
 	}
-	// logger = logger.With("conn", c, "req", req)
-
-	// output request for debugging
-	// logger.Debug("handling request")
 
 	var wg sync.WaitGroup
 
