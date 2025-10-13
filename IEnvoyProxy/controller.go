@@ -247,7 +247,7 @@ type Controller struct {
 	xrayXhttpPort         int
 	hysteria2Port         int
 	echProxyPort          int
-	masquePort			  int
+	masqueListenPort      int
 }
 
 // NewController - Create a new Controller object.
@@ -278,7 +278,7 @@ func NewController(stateDir string, enableLogging, unsafeLogging bool, logLevel 
 		EchTestTarget:    "https://www.google.com/generate_204",
 		EchTestResponse:  204,
 
-		masquePort:		  50000,
+		masqueListenPort: 50000,
 	}
 
 	if logLevel == "" {
@@ -533,7 +533,7 @@ func (c *Controller) LocalAddress(methodName string) string {
 
 	case Masque:
 		if c.masqueRunning {
-			return net.JoinHostPort("127.0.0.1", strconv.Itoa(c.masquePort))
+			return net.JoinHostPort("127.0.0.1", strconv.Itoa(c.masqueListenPort))
 		}
 		return ""
 
@@ -603,7 +603,7 @@ func (c *Controller) Port(methodName string) int {
 
 	case Masque:
 		if c.masqueRunning {
-			return c.masquePort
+			return c.masqueListenPort
 		}
 		return 0
 
@@ -909,12 +909,14 @@ func (c *Controller) Start(methodName string, proxy string) error {
 
 	case Masque:
 		if !c.masqueRunning {
-			c.masquePort = findPort(c.masquePort)
+			c.masqueListenPort = findPort(c.masqueListenPort)
+
+			log.Printf("Envoy: Staring MASQUE to %s:%d", c.MasqueHost, c.MasquePort)
 
 			c.masqueProxy = &EnvoyMasqueProxy{
 				UpstreamServer: c.MasqueHost,
 				UpstreamPort: c.MasquePort,
-				ListenPort: c.masquePort,
+				ListenPort: c.masqueListenPort,
 
 				insecure: false,
 				token: "NEEDED FOR invisv-privacy/masque",
