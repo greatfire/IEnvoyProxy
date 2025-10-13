@@ -61,7 +61,7 @@ func (e *EchProxy) startProxy() {
 		Addr:    e.ProxyListen,
 	}
 
-	log.Printf("Evnoy ECH proxy listening on: %s", e.ProxyListen)
+	log.Printf("Envoy ECH proxy listening on: %s", e.ProxyListen)
 
 	s.ListenAndServe()
 }
@@ -165,7 +165,7 @@ func copyResponse(w http.ResponseWriter, resp *http.Response) (error) {
 
 // HTTP/2 to Envoy proxy
 func (e *EchProxy) envoyHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" && r.Method != "POST" {
+	if r.Method == "CONNECT" || r.Method == "TRACE" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
