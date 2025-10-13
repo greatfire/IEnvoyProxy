@@ -221,6 +221,9 @@ type Controller struct {
 	// upstream host and port
 	MasqueHost			  string
 	MasquePort			  int
+	// sent in the Proxy-Authorization header
+	// required by the underlying library, set a dummy value if needed
+	MasqueProxyToken      string
 	// instance
 	masqueProxy			  *EnvoyMasqueProxy
 
@@ -919,7 +922,7 @@ func (c *Controller) Start(methodName string, proxy string) error {
 				ListenPort: c.masqueListenPort,
 
 				insecure: false,
-				token: "NEEDED FOR invisv-privacy/masque",
+				token: c.MasqueProxyToken,
 			}
 
 			c.masqueRunning = true
