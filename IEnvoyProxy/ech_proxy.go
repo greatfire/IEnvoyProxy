@@ -72,7 +72,7 @@ func (e *EchProxy) envoyProxyRequest(r *http.Request, useHttp3 bool) (*http.Resp
 
 	req, err := http.NewRequest(r.Method, u, nil)
 	if err != nil {
-		log.Printf("error createing request: %s", err)
+		log.Printf("error creating request: %s", err)
 		return &http.Response{}, err
 	}
 

@@ -881,7 +881,6 @@ func (c *Controller) Start(methodName string, proxy string) error {
 		go acceptLoop(f, ln, nil, extraArgs, c.shutdown[methodName], methodName, c.transportStopped)
 
 	case EnvoyEch:
-		log.Printf("Envoy: Sanity pineapple 🍍\n")
 		if !c.echProxyRunning {
 			c.echProxyPort = findPort(c.echProxyPort)
 
@@ -1130,7 +1129,6 @@ func isItUpYet(addr string) (bool, error) {
 		conn, err := d.DialContext(ctx, "tcp", addr)
 		// This can throw timeout and connection refused... probably more
 		// just ignore it all ;-)
-		log.Printf("&&&& isItUpYet %s", err)
 		if err == nil {
 			conn.Close()
 			cancel()

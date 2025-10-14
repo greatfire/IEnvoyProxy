@@ -143,7 +143,6 @@ func (e *EchProxy) testHttps() (string) {
 	select {
 	case result := <- resultChan:
 		cancel()
-		log.Printf("*** got a result: %s", result.EnvoyUrl)
 		return result.EnvoyUrl
 	case <-time.After(30 * time.Second):
 		cancel()
