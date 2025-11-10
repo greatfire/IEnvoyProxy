@@ -1031,14 +1031,18 @@ func (c *Controller) Stop(methodName string) {
 
 	case EnvoyEch:
 		if c.echProxyRunning {
-			ptlog.Warnf("TODO %s can't stop!", methodName)
+			ptlog.Noticef("Shutting down %s", methodName)
+			go c.echProxy.Stop()
+			c.echProxyRunning = false
 		} else {
 			ptlog.Warnf("No listener for %s", methodName)
 		}
 
 	case Masque:
 		if c.echProxyRunning {
-			ptlog.Warnf("TODO %s can't stop!", methodName)
+			ptlog.Noticef("Shutting down %s", methodName)
+			go c.masqueProxy.Stop()
+			c.masqueRunning = false
 		} else {
 			ptlog.Warnf("No listener for %s", methodName)
 		}

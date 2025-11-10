@@ -7,15 +7,18 @@ package IEnvoyProxy
 
 import (
 	"crypto/tls"
-	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"io"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/quic-go/quic-go/http3"
 )
 
+var echOsSignals = make(chan os.Signal, 1)
 
 type EchProxy struct {
 	TestTarget		string
@@ -32,16 +35,8 @@ type EchProxy struct {
 	// initialized		bool
 }
 
-type EnvoyResonse struct {
+type EnvoyResponse struct {
 	EnvoyUrl	string
-}
-
-type Stopper struct {
-    foo bool
-}
-
-func (s Stopper) Stopped(name string, err error) {
-    fmt.Printf("stopped %s", name)
 }
 
 // start up the web server for the Envoy proxy proxy
@@ -63,7 +58,16 @@ func (e *EchProxy) startProxy() {
 
 	log.Printf("Envoy ECH proxy listening on: %s", e.ProxyListen)
 
+	go func() {
+		signal.Notify(echOsSignals, syscall.SIGTERM)
+	    <-echOsSignals
+	}()
+
 	s.ListenAndServe()
+}
+
+func (e *EchProxy) Stop() {
+	echOsSignals <- syscall.SIGTERM
 }
 
 func (e *EchProxy) envoyProxyRequest(r *http.Request, useHttp3 bool) (*http.Response, error) {
@@ -84,10 +88,15 @@ func (e *EchProxy) envoyProxyRequest(r *http.Request, useHttp3 bool) (*http.Resp
 	}
 
 	tlsClientConfig := &tls.Config {
-		EncryptedClientHelloConfigList: e.EchConfigList,
 		// XXX Go knows it's making a request to the proxy, but it's getting
 		// a certificate for wikipedia
 		InsecureSkipVerify: true,
+	}
+
+	// http.Client will throw errors if given an ECHConfigList empty
+	if len(e.EchConfigList) != 0 {
+		log.Printf("Setting ECH config list to %v", e.EchConfigList)
+		tlsClientConfig.EncryptedClientHelloConfigList = e.EchConfigList
 	}
 
 	var httpClient http.Client
@@ -109,12 +118,6 @@ func (e *EchProxy) envoyProxyRequest(r *http.Request, useHttp3 bool) (*http.Resp
 	if err != nil {
 		log.Printf("Error requesting proxy: %s", err)
 		return &http.Response{}, err
-	}
-
-	if resp.TLS.ECHAccepted {
-		log.Printf("envoyECH worked ✅")
-	} else {
-		log.Printf("envoyECH failed ❌")
 	}
 
 	return resp, nil
