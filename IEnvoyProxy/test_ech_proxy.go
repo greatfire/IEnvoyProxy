@@ -75,7 +75,7 @@ func (e *EchProxy) getTestRequest(ctx context.Context, u string) (*http.Request,
 // useHttp3 is a bool, HTTP/2 is used if false
 // results are sent to the EnvoyResponse chan
 //
-func (e *EchProxy) doTestHttps(ctx context.Context, useHttp3 bool, resultChan chan EnvoyResonse) (bool, error) {
+func (e *EchProxy) doTestHttps(ctx context.Context, useHttp3 bool, resultChan chan EnvoyResponse) (bool, error) {
 	u := "http://" + e.ProxyListen
 
 	if useHttp3 {
@@ -109,7 +109,7 @@ func (e *EchProxy) doTestHttps(ctx context.Context, useHttp3 bool, resultChan ch
 
 	if resp.StatusCode == e.TargetResponse {
 		// clear out digest param
-		resultChan <- EnvoyResonse{
+		resultChan <- EnvoyResponse{
 			EnvoyUrl: testUrl.String(),
 		}
 	}
@@ -129,7 +129,7 @@ func (e *EchProxy) testHttps() (string) {
 	// log.Debug("it's up?")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	resultChan := make(chan EnvoyResonse, 1)
+	resultChan := make(chan EnvoyResponse, 1)
 
 	log.Printf("waiting for proxy to start...")
 	isItUpYet(e.ProxyListen)

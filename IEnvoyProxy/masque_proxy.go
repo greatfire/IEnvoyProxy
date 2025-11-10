@@ -24,6 +24,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,8 @@ import (
 	masque "github.com/invisv-privacy/masque"
 	masqueH2 "github.com/invisv-privacy/masque/http2"
 )
+
+var masqueOsSignals = make(chan os.Signal, 1)
 
 type EnvoyMasqueProxy struct {
 	// MASQUE server hostname
@@ -74,6 +77,11 @@ func (p *EnvoyMasqueProxy) Start() {
 	p.relayClient = c
 	log.Printf("Connected to upstream")
 
+	go func(){
+		signal.Notify(masqueOsSignals, syscall.SIGTERM)
+	    <-masqueOsSignals
+	}()
+
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -83,6 +91,10 @@ func (p *EnvoyMasqueProxy) Start() {
 
 		go p.handleReq(conn)
 	}
+}
+
+func (p *EnvoyMasqueProxy) Stop() {
+	masqueOsSignals <- syscall.SIGTERM
 }
 
 func transfer(destination io.WriteCloser, source io.ReadCloser, wg *sync.WaitGroup) {
