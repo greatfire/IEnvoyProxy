@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'IEnvoyProxy'
-  s.version          = '3.4.0'
+  s.version          = '3.5.0'
   s.summary          = 'Lyrebird/Obfs4proxy, Snowflake and V2Ray for iOS and macOS'
 
   s.description      = <<-DESC
@@ -39,8 +39,10 @@ Pod::Spec.new do |s|
     |-----------|----------------------:|
     | Lyrebird  |                 0.6.0 |
     | Snowflake |                2.11.0 |
-    | V2Ray     |                5.30.0 |
+    | V2Ray     |                5.40.0 |
     | Hysteria2 |                 2.6.1 |
+    | Xray      |               25.9.11 |
+
 
   DESC
 

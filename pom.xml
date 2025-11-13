@@ -6,7 +6,7 @@
   <packaging>aar</packaging>
   <groupId>org.greatfire</groupId>
   <artifactId>IEnvoyProxy</artifactId>
-  <version>3.4.0</version>
+  <version>3.5.0</version>
   <name>IEnvoyProxy</name>
   <description>This is a fork of IPtProxy (https://github.com/tladesignz/IPtProxy) modified to include Go projects used by Envoy (https://github.com/greatfire/envoy)
 currently this includes: Lyrebird, Snowflake, V2Ray and Hysteria2.</description>

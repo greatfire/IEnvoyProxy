@@ -1,5 +1,15 @@
 # IEnvoyProxy Changlog
 
+## 3.5.0
+- Added ECH and MASQUE support.
+- Added Xray support.
+- Added Hysteria2 client connection settings.
+- Added V2Ray-HTTP and uTLS/Hostname support.
+- Added V2Ray HTTP/2 flavor support.
+- Added V2Ray domain2ip map support.
+- Added TLS settings for V2Ray Websocket.
+- Updated V2Ray to version 5.40.0.
+
 ## 3.4.0
 - Updated V2Ray to version 5.30.0.
 - Fixed Hysteria submodule to version 2.6.1. Was 2.6.0 before.
