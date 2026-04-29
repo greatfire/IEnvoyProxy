@@ -1,19 +1,18 @@
 # IEnvoyProxy
 
-This is a fork of IPtProxy (https://github.com/tladesignz/IPtProxy) modified to include censorship evading proxies used by Envoy (https://github.com/greatfire/envoy)
+This is a fork of IPtProxy (https://github.com/tladesignz/IPtProxy) modified to include censorship evading proxies used by Envoy (https://github.com/greatfire/envoy).
 
-currently this includes:
+Currently this includes:
 
-* Lyrebird(https://gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/lyrebird)
-* Snowflake(https://gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/snowflake)
-* [V2ray](https://github.com/v2fly/v2ray-core)
-* [XRay](https://github.com/XTLS/Xray-core)
+* Lyrebird transports: [Obfs4](https://gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/lyrebird), MeekLite and WebTunnel
+* [Snowflake](https://gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/snowflake)
+* [V2Ray](https://github.com/v2fly/v2ray-core) WebSocket and HTTP
+* [XRay](https://github.com/XTLS/Xray-core) XHTTP
 * [Hysteria2](https://github.com/apernet/hysteria.git)
+* [DNSTT](https://www.bamsoftware.com/software/dnstt/)
 
 We have previously supported (available in git history):
 
-* [obfs4proxy](https://github.com/Yawning/obfs4)
-* [DNSTT](https://www.bamsoftware.com/software/dnstt/)
 * [Hysteria](https://github.com/HyNetwork/hysteria)
 
 
@@ -21,14 +20,14 @@ While this library was made for use with Envoy, it does not depend on Envoy, and
 Some of the choices made are specific to our needs, but if others want to use this, we can look in to making it more flexible.
 
 In all cases there is the `Controller.Start()` and `Controller.Stop()` function to start a service. 
-There is also `Controller.Port()` and `Controller.LocalAddres()` to get the port each service is listening on.
+There is also `Controller.Port()` and `Controller.LocalAddress()` to get the address each service is listening on.
 If the respective service is not started, yet, these functions will return `0` resp. an empty string.
 
 IEnvoyProxy is still a work in progress. Feel free to open issues in this repo if you have questions or comments.
 
 Problems solved in particular are:
 
-- One cannot compile `main` packages with `gomobile`. Both PTs are patched
+- One cannot compile `main` packages with `gomobile`. Transport packages are patched
   to avoid this.
 - Proxies are gathered under one roof here, since you cannot have two
   `gomobile` frameworks as dependencies, since there are some common Go
@@ -119,7 +118,7 @@ dependencyResolutionManagement {
 }
 ```
 
-Precomiled binaries are also available on the [releases page](https://github.com/stevenmcdonald/IEnvoyProxy/releases)
+Precompiled binaries are also available on the [releases page](https://github.com/greatfire/IEnvoyProxy/releases).
 
 ### Getting Started
 

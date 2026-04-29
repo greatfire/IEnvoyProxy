@@ -1,7 +1,51 @@
+diff -Naur a/core/domain2ip.go b/core/domain2ip.go
+--- a/core/domain2ip.go	1970-01-01 00:00:00.000000000 +0000
++++ b/core/domain2ip.go	2026-02-23 16:54:12.830250167 +0000
+@@ -0,0 +1,40 @@
++package core
++
++import (
++	"sync"
++)
++
++// DomainToIPs is a map of domain names to IP addresses
++// Note: there may be multiple IP addresses for a given domain
++var DomainToIPs = map[string][]string{}
++var domainMutex sync.RWMutex
++
++// GetDomainIPs returns IP addresses for a given domain
++func GetDomainIPs(domain string) ([]string, bool) {
++	domainMutex.RLock()
++	defer domainMutex.RUnlock()
++	ips, ok := DomainToIPs[domain]
++	return ips, ok
++}
++
++// SetDomainIPs sets IP addresses for a given domain
++func SetDomainIPs(domain string, ips []string) {
++	domainMutex.Lock()
++	defer domainMutex.Unlock()
++	DomainToIPs[domain] = ips
++}
++
++// DropDomainIPs drops specific IP address for a given domain from the cache
++func DropDomainIPs(domain string, ip string) {
++	domainMutex.Lock()
++	defer domainMutex.Unlock()
++	for i, existingIP := range DomainToIPs[domain] {
++		if existingIP == ip {
++			DomainToIPs[domain] = append(DomainToIPs[domain][:i], DomainToIPs[domain][i+1:]...)
++			if len(DomainToIPs[domain]) == 0 {
++				delete(DomainToIPs, domain)
++			}
++			break
++		}
++	}
++}
 diff -Naur a/envoy/xray.go b/envoy/xray.go
 --- a/envoy/xray.go	1970-01-01 00:00:00.000000000 +0000
-+++ b/envoy/xray.go	2025-11-06 16:20:02.046786427 +0000
-@@ -0,0 +1,189 @@
++++ b/envoy/xray.go	2026-04-27 11:54:21.346086194 +0000
+@@ -0,0 +1,267 @@
 +package xray
 +
 +// copied and modified from main/commands/run.go
@@ -23,10 +67,8 @@ diff -Naur a/envoy/xray.go b/envoy/xray.go
 +
 +import (
 +	"fmt"
-+	"os"
-+	"os/signal"
 +	"strings"
-+	"syscall"
++	"sync"
 +
 +	core "github.com/xtls/xray-core/core"
 +	_ "github.com/xtls/xray-core/main/distro/all"
@@ -34,7 +76,7 @@ diff -Naur a/envoy/xray.go b/envoy/xray.go
 +
 +const jsonV5 = "json"
 +
-+var osXrxhSignals = make(chan os.Signal, 1)
++var xrxhServers sync.Map
 +
 +// getInbound
 +//
@@ -52,14 +94,15 @@ diff -Naur a/envoy/xray.go b/envoy/xray.go
 +      }`, clientPort)
 +}
 +
-+func getXrxhConfig(clientPort int, serverAddress, serverPort, xhttpPath, id string, allowInsecure bool, serverName string, hostName string, xhttpMode string) string {
-+	return fmt.Sprintf(`
++func getXrxhConfig(clientPort int, serverAddress, serverPort, xhttpPath, id string, allowInsecure bool, serverName string, hostName string, xhttpMode string, xhttpVersion string) string {
++	if xhttpVersion == "h2" {
++		return fmt.Sprintf(`
 +  {
 +    "log": {
++      "access": "none",
 +      "loglevel": "warning"
 +    },
-+    "inbounds": [%s
-+    ],
++    "inbounds": [ %s ],
 +    "outbounds": [
 +      {
 +        "protocol": "vless",
@@ -88,16 +131,88 @@ diff -Naur a/envoy/xray.go b/envoy/xray.go
 +          "tlsSettings": {
 +            "serverName": "%s",
 +            "allowInsecure": %t,
-+            "alpn": ["h2", "http/1.1"]
++            "alpn": [ "h2", "http/1.1"]
 +          }
 +        }
 +      }
 +    ]
 +  }`, getInbound(clientPort), serverAddress, serverPort, id, hostName, xhttpPath, xhttpMode, serverName, allowInsecure)
++	} else if xhttpVersion == "h3" {
++		return fmt.Sprintf(`
++  {
++    "log": {
++      "access": "none",
++      "loglevel": "warning"
++    },
++    "inbounds": [ %s ],
++    "outbounds": [
++      {
++        "protocol": "vless",
++        "settings": {
++          "vnext": [
++            {
++              "address": "%s",
++              "port": %s,
++              "users": [
++                {
++                  "id": "%s",
++                  "encryption": "none"
++                }
++              ]
++            }
++          ]
++        },
++        "streamSettings": {
++          "network": "xhttp",
++          "xhttpSettings": {
++            "host": "%s",
++            "path": "%s",
++            "mode": "%s",
++			"#xmux": { //Use default values. To customize: remove the preceding # (hash). Note: cannot exceed Nginx's maximum (upper limit) value.
++				"maxConcurrency": 128, //Nginx default limit 128. https://nginx.org/en/docs/http/ngx_http_v3_module.html#http3_max_concurrent_streams
++				"hMaxRequestTimes": 1000, //Nginx default limit 1000. https://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_requests
++				"hMaxReusableSecs": 3600 //Nginx default limit 3600s(1h). https://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_time
++			},
++			"#downloadSettings": { //For H2 download: remove the preceding # (hash) to use downloadSettings; change the mode above and in server.json to stream-up.
++				"address": "%s",
++				"port": %s,
++				"network": "xhttp",
++				"xhttpSettings": {
++					"host": "%s",
++					"path": "%s", //Fill in your path (same as above)
++					"#xmux": { //Use default values. To customize: remove the preceding # (hash). Note: cannot exceed Nginx's maximum (upper limit) value.
++						"maxConcurrency": 128, //Nginx default limit 128. https://nginx.org/en/docs/http/ngx_http_v3_module.html#http3_max_concurrent_streams
++						"hMaxRequestTimes": 1000, //Nginx default limit 1000. https://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_requests
++						"hMaxReusableSecs": 3600 //Nginx default limit 3600s(1h). https://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_time
++					}
++				},
++				"security": "tls",
++				"tlsSettings": {
++					"serverName": "%s",
++					"allowInsecure": %t,
++					"alpn": ["h2", "http/1.1"]
++				}
++			}
++		  },
++          "security": "tls",
++          "tlsSettings": {
++            "serverName": "%s",
++            "allowInsecure": %t,
++            "alpn": [
++			  "h3" //If performance is far below expectations and the log shows "QUIC flood detected", refer to: https://github.com/XTLS/Xray-core/discussions/4197
++			]
++          }
++        }
++      }
++    ]
++  }`, getInbound(clientPort), serverAddress, serverPort, id, hostName, xhttpPath, xhttpMode, serverAddress, serverPort, hostName, xhttpPath, serverName, allowInsecure, serverName, allowInsecure)
++	} else {
++		return ""
++	}
 +}
 +
 +func startServer(jsonConfig string) (*core.Instance, error) {
-+	// fmt.Printf("DEBUG: Xray JSON config:\n%s\n", jsonConfig)
++	// fmt.Printf("DEBUG: Starting Xray with JSON config:\n%s\n", jsonConfig)
 +	reader := strings.NewReader(jsonConfig)
 +
 +	config, err := core.LoadConfig(jsonV5, reader)
@@ -129,9 +244,10 @@ diff -Naur a/envoy/xray.go b/envoy/xray.go
 +	ServerName    string
 +	Hostname      string
 +	XhttpMode     string
++	XhttpVersion  string
 +}
 +
-+// StartXrxh - start Xray with XHTTP transport
++// StartXrxh - start Xray with XHTTP transport via HTTP/2 or HTTP/1.1
 +//
 +// @param clientPort - client SOCKS port routed to the XHTTP server
 +//
@@ -143,8 +259,7 @@ diff -Naur a/envoy/xray.go b/envoy/xray.go
 +//
 +// @param id - UUID used to authenticate with the server
 +//
-+// @param config - optional configuration (allowInsecure defaults to false,
-+// serverName defaults to serverAddress, xhttpMode defaults to stream-one)
++// @param config - optional configuration with certain defaults
 +//
 +// @returns error, if transport could not be started, or `nil` on success.
 +func StartXrxh(clientPort int, serverAddress, serverPort, xhttpPath, id string, config ...XrxhConfigOptional) error {
@@ -152,7 +267,9 @@ diff -Naur a/envoy/xray.go b/envoy/xray.go
 +	allowInsecure := false
 +	serverName := serverAddress
 +	hostName := serverAddress
++	// Defaults to HTTP/2
 +	xhttpMode := "stream-one"
++	xhttpVersion := "h2"
 +
 +	// Override with provided config if any
 +	if len(config) > 0 {
@@ -165,35 +282,40 @@ diff -Naur a/envoy/xray.go b/envoy/xray.go
 +			hostName = cfg.Hostname
 +		}
 +		if cfg.XhttpMode != "" {
++			// Can be either stream-one (for h2) or packet-up (for h3)
 +			xhttpMode = cfg.XhttpMode
++		}
++		if cfg.XhttpVersion != "" {
++			// Can be either h2 or h3
++			xhttpVersion = cfg.XhttpVersion
 +		}
 +	}
 +
-+	server, err := startServer(getXrxhConfig(clientPort, serverAddress, serverPort, xhttpPath, id, allowInsecure, serverName, hostName, xhttpMode))
++	server, err := startServer(getXrxhConfig(clientPort, serverAddress, serverPort, xhttpPath, id, allowInsecure, serverName, hostName, xhttpMode, xhttpVersion))
 +	if err != nil {
 +		return err
 +	}
 +
-+	go func(server *core.Instance) {
-+		defer func(server *core.Instance) {
-+			_ = server.Close()
-+		}(server)
-+
-+		{
-+			signal.Notify(osXrxhSignals, syscall.SIGTERM)
-+			<-osXrxhSignals
-+		}
-+	}(server)
-+
++	xrxhServers.Store(clientPort, server)
 +	return nil
 +}
 +
++func StopXrxhByPort(clientPort int) {
++	if val, ok := xrxhServers.LoadAndDelete(clientPort); ok {
++		_ = val.(*core.Instance).Close()
++	}
++}
++
 +func StopXrxh() {
-+	osXrxhSignals <- syscall.SIGTERM
++	xrxhServers.Range(func(key, value any) bool {
++		xrxhServers.Delete(key)
++		_ = value.(*core.Instance).Close()
++		return true
++	})
 +}
 diff -Naur a/proxy/wireguard/tun.go b/proxy/wireguard/tun.go
 --- a/proxy/wireguard/tun.go	2025-10-14 20:23:35.482996098 +0000
-+++ b/proxy/wireguard/tun.go	2025-11-06 13:06:30.235470037 +0000
++++ b/proxy/wireguard/tun.go	2026-02-23 16:54:12.830250167 +0000
 @@ -194,7 +194,7 @@
  					Timeout: 15 * time.Second,
  				})
@@ -203,3 +325,126 @@ diff -Naur a/proxy/wireguard/tun.go b/proxy/wireguard/tun.go
  			}(r)
  		})
  		stack.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)
+diff -Naur a/transport/internet/splithttp/dialer.go b/transport/internet/splithttp/dialer.go
+--- a/transport/internet/splithttp/dialer.go	2025-10-14 20:23:35.490996211 +0000
++++ b/transport/internet/splithttp/dialer.go	2026-02-23 16:54:12.830250167 +0000
+@@ -21,6 +21,7 @@
+ 	"github.com/xtls/xray-core/common/net"
+ 	"github.com/xtls/xray-core/common/signal/done"
+ 	"github.com/xtls/xray-core/common/uuid"
++	core "github.com/xtls/xray-core/core"
+ 	"github.com/xtls/xray-core/transport/internet"
+ 	"github.com/xtls/xray-core/transport/internet/browser_dialer"
+ 	"github.com/xtls/xray-core/transport/internet/reality"
+@@ -117,6 +118,9 @@
+ 			return nil, err
+ 		}
+ 
++		// Log the actual remote address we connected to
++		errors.LogInfo(ctxInner, "Successfully connected to remote address: ", conn.RemoteAddr().String())
++
+ 		if realityConfig != nil {
+ 			return reality.UClient(conn, realityConfig, ctxInner, dest)
+ 		}
+@@ -161,8 +165,8 @@
+ 		transport = &http3.Transport{
+ 			QUICConfig:      quicConfig,
+ 			TLSClientConfig: gotlsConfig,
+-			Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
+-				conn, err := internet.DialSystem(ctx, dest, streamSettings.SocketSettings)
++			Dial: func(ctxH3 context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
++				conn, err := internet.DialSystem(ctxH3, dest, streamSettings.SocketSettings)
+ 				if err != nil {
+ 					return nil, err
+ 				}
+@@ -195,7 +199,10 @@
+ 					}
+ 				}
+ 
+-				return quic.DialEarly(ctx, udpConn, udpAddr, tlsCfg, cfg)
++				// Log the UDP address we're dialing for HTTP/3
++				errors.LogInfo(ctxH3, "HTTP/3 QUIC dialing to UDP address: ", udpAddr.String())
++
++				return quic.DialEarly(ctxH3, udpConn, udpAddr, tlsCfg, cfg)
+ 			},
+ 		}
+ 	} else if httpVersion == "2" {
+@@ -253,6 +260,23 @@
+ 		dest.Network = net.Network_UDP
+ 	}
+ 
++	// Only try to resolve using GetDomainIPs if the address is a domain, not an IP
++	var originalDomain string
++	if dest.Address.Family().IsDomain() {
++		originalDomain = dest.Address.Domain()
++		if ips, ok := core.GetDomainIPs(originalDomain); ok {
++			resolvedIP := ips[0]
++			dest.Address = net.ParseAddress(resolvedIP)
++			errors.LogInfo(ctx, "Resolved domain ", originalDomain, " to IP ", resolvedIP, " from cache")
++		} else {
++			errors.LogInfo(ctx, "Domain ", originalDomain, " not found in cache, will use system DNS")
++		}
++	} else {
++		originalDomain = dest.Address.String()
++	}
++
++	errors.LogInfo(ctx, "Connecting to IP: ", dest.Address.String(), " (original domain: ", originalDomain, ")")
++
+ 	transportConfiguration := streamSettings.ProtocolSettings.(*Config)
+ 	var requestURL url.URL
+ 
+@@ -269,7 +293,7 @@
+ 		requestURL.Host = realityConfig.ServerName
+ 	}
+ 	if requestURL.Host == "" {
+-		requestURL.Host = dest.Address.String()
++		requestURL.Host = originalDomain
+ 	}
+ 
+ 	sessionIdUuid := uuid.New()
+@@ -311,6 +335,24 @@
+ 		if httpVersion2 == "3" {
+ 			dest2.Network = net.Network_UDP
+ 		}
++
++		// Only try to resolve using GetDomainIPs if the address is a domain, not an IP
++		var originalDomain string
++		if dest2.Address.Family().IsDomain() {
++			originalDomain = dest2.Address.Domain()
++			if ips, ok := core.GetDomainIPs(originalDomain); ok {
++				resolvedIP := ips[0]
++				dest2.Address = net.ParseAddress(resolvedIP)
++				errors.LogInfo(ctx, "DownloadSettings: Resolved domain ", originalDomain, " to IP ", resolvedIP, " from cache")
++			} else {
++				errors.LogInfo(ctx, "DownloadSettings: Domain ", originalDomain, " not found in cache, will use system DNS")
++			}
++		} else {
++			originalDomain = dest2.Address.String()
++		}
++
++		errors.LogInfo(ctx, "DownloadSettings: Connecting to IP: ", dest2.Address.String(), " (original domain: ", originalDomain, ")")
++
+ 		if tlsConfig2 != nil || realityConfig2 != nil {
+ 			requestURL2.Scheme = "https"
+ 		} else {
+@@ -325,7 +367,7 @@
+ 			requestURL2.Host = realityConfig2.ServerName
+ 		}
+ 		if requestURL2.Host == "" {
+-			requestURL2.Host = dest2.Address.String()
++			requestURL2.Host = originalDomain
+ 		}
+ 		requestURL2.Path = config2.GetNormalizedPath() + sessionIdUuid.String()
+ 		requestURL2.RawQuery = config2.GetNormalizedQuery()
+diff -Naur a/transport/internet/websocket/dialer.go b/transport/internet/websocket/dialer.go
+--- a/transport/internet/websocket/dialer.go	2025-10-14 20:23:35.490996211 +0000
++++ b/transport/internet/websocket/dialer.go	2026-02-23 16:54:12.830250167 +0000
+@@ -53,7 +53,7 @@
+ 		},
+ 		ReadBufferSize:   4 * 1024,
+ 		WriteBufferSize:  4 * 1024,
+-		HandshakeTimeout: time.Second * 8,
++		HandshakeTimeout: time.Second * 15,
+ 	}
+ 
+ 	protocol := "ws"

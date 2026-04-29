@@ -61,12 +61,16 @@ if test -e ".git"; then
     git reset --hard
     git clean -fd
     cp -a . "$TMPDIR/Xray-core"
+    cd ../dnstt || exit 1
+    git reset --hard
+    cp -a . "$TMPDIR/dnstt"
     cd ..
 else
     # No .git directory - That's a normal install.
     git clone --recursive --shallow-submodules --depth 1 --branch "401ed524" https://github.com/apernet/hysteria.git "$TMPDIR/hysteria"
     git clone --recursive --shallow-submodules --depth 1 --branch "28f55860" https://github.com/v2fly/v2ray-core.git "$TMPDIR/v2ray-core"
     git clone --recursive --shallow-submodules --depth 1 --branch "dcfde8dc" https://github.com/XTLS/Xray-core.git "$TMPDIR/Xray-core"
+    git clone --recursive --shallow-submodules --depth 1 --branch "4d6751da" https://github.com/tladesignz/dnstt.git "$TMPDIR/dnstt"
 fi
 
 # Apply patches.
@@ -75,6 +79,7 @@ pwd
 patch --directory="$TMPDIR/hysteria" --strip=1 < hysteria.patch
 patch --directory="$TMPDIR/v2ray-core" --strip=1 < v2ray-core.patch
 patch --directory="$TMPDIR/Xray-core" --strip=1 < xray-core.patch
+patch --directory="$TMPDIR/dnstt" --strip=1 < dnstt.patch
 
 # Rename Xray protobuf files to avoid conflicts with V2Ray
 TMPDIR="$TMPDIR" ./xray-rename-protobuf.sh

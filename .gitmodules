@@ -7,3 +7,6 @@
 [submodule "Xray-core"]
 	path = Xray-core
 	url = https://github.com/XTLS/Xray-core.git
+[submodule "dnstt"]
+	path = dnstt
+	url = https://github.com/tladesignz/dnstt.git

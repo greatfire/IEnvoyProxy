@@ -28,6 +28,7 @@ import (
 	"gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/lyrebird/transports/base"
 	sfversion "gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/snowflake/v2/common/version"
 	"golang.org/x/net/proxy"
+	dnsttclient "www.bamsoftware.com/git/dnstt.git/dnstt-client/lib"
 )
 
 // LogFileName - the filename of the log residing in `StateDir`.
@@ -82,11 +83,15 @@ const (
 	// V2RayHttp - V2Ray Proxy via HTTP
 	V2RayHttp = "v2ray_http"
 
-	// XRayXhttp - Xray Proxy via HTTP
+	// XRayXhttp - Xray Proxy via HTTP/2 or HTTP/1.1
 	XRayXhttp = "xray_xhttp"
 
 	// Hysteria2 - Hysteria 2 Proxy
 	Hysteria2 = "hysteria2"
+
+	// Dnstt - DNS tunnel transport (tladesignz fork of David Fifield's dnstt).
+	// Config is passed per-connection via SOCKS5 args: doh, pubkey, domain.
+	Dnstt = "dnstt"
 
 	// EnvoyEch - Envoy ECH proxy
 	EnvoyEch = "envoy_ech"
@@ -187,6 +192,8 @@ type Controller struct {
 	XRayAllowInsecure bool
 	XRayServerName    string
 	XRayHostname      string
+	XRayXhttpMode     string
+	XRayXhttpVersion  string
 
 	// Hysteria2Server - A Hysteria2 server URL https://v2.hysteria.network/docs/developers/URI-Scheme/
 	Hysteria2Server string
@@ -270,18 +277,18 @@ func NewController(stateDir string, enableLogging, unsafeLogging bool, logLevel 
 	c := &Controller{
 		stateDir:         stateDir,
 		transportStopped: transportStopped,
-		v2raySrtpPort:    47600,
-		v2rayWechatPort:  47700,
-		v2rayWsPort:      47800,
-		v2rayHttpPort:    47900,
-		xrayXhttpPort:    48100,
-		hysteria2Port:    48000,
+		v2raySrtpPort:    45000,
+		v2rayWechatPort:  46000,
+		v2rayWsPort:      47000,
+		v2rayHttpPort:    48000,
+		xrayXhttpPort:    49000,
+		hysteria2Port:    50000,
 
-		echProxyPort:     49000,
+		echProxyPort:     51000,
 		EchTestTarget:    "https://www.google.com/generate_204",
 		EchTestResponse:  204,
 
-		masqueListenPort: 50000,
+		masqueListenPort: 52000,
 	}
 
 	if logLevel == "" {
@@ -548,6 +555,19 @@ func (c *Controller) LocalAddress(methodName string) string {
 	}
 }
 
+// SetPortOffset shifts all internal base ports by the given offset.
+// Use this to prevent port collisions when running multiple controllers concurrently.
+func (c *Controller) SetPortOffset(offset int) {
+	c.v2raySrtpPort += offset
+	c.v2rayWechatPort += offset
+	c.v2rayWsPort += offset
+	c.v2rayHttpPort += offset
+	c.xrayXhttpPort += offset
+	c.hysteria2Port += offset
+	c.echProxyPort += offset
+	c.masqueListenPort += offset
+}
+
 // Port - Port of the given transport.
 //
 // @param methodName one of the constants `ScrambleSuit` (deprecated), `Obfs2` (deprecated), `Obfs3` (deprecated),
@@ -774,7 +794,8 @@ func (c *Controller) Start(methodName string, proxy string) error {
 				AllowInsecure: c.XRayAllowInsecure,
 				ServerName:    c.XRayServerName,
 				Hostname:      c.XRayHostname,
-				XhttpMode:     "stream-one",
+				XhttpMode:     c.XRayXhttpMode,
+				XhttpVersion:  c.XRayXhttpVersion,
 			})
 			if err != nil {
 				ptlog.Errorf("Failed to initialize %s: %s", methodName, err)
@@ -847,6 +868,32 @@ func (c *Controller) Start(methodName string, proxy string) error {
 			// on that configured SOCKS5 port, yet and connections would fail.
 			time.Sleep(time.Second)
 		}
+
+	case Dnstt:
+		ln, err := pt.ListenSocks("tcp", "127.0.0.1:0")
+		if err != nil {
+			ptlog.Errorf("Failed to initialize %s: %s", methodName, err.Error())
+			return err
+		}
+
+		c.listeners[methodName] = ln
+		c.shutdown[methodName] = make(chan struct{})
+
+		utlsID, err := dnsttclient.SampleUTLSDistribution("3*Chrome_133,3*Chrome_131,2*Firefox_120,1*Safari_16_0,1*Edge_106")
+		if err != nil {
+			ptlog.Errorf("Failed to initialize %s uTLS: %s", methodName, err.Error())
+			return err
+		}
+
+		go func() {
+			var wg sync.WaitGroup
+			go dnsttclient.AcceptLoop(ln, utlsID, c.shutdown[methodName], &wg, log.New(io.Discard, "", 0))
+			<-c.shutdown[methodName]
+			wg.Wait()
+			if c.transportStopped != nil {
+				go c.transportStopped.Stopped(methodName, nil)
+			}
+		}()
 
 	case Snowflake:
 		extraArgs := &pt.Args{}
@@ -975,8 +1022,8 @@ func (c *Controller) Stop(methodName string) {
 
 	case V2RayWs:
 		if c.v2rayWsRunning {
-			ptlog.Noticef("Shutting down %s", methodName)
-			go v2ray.StopWs()
+			ptlog.Noticef("Shutting down %s on port %d", methodName, c.v2rayWsPort)
+			go v2ray.StopWsByPort(c.v2rayWsPort)
 			c.v2rayWsRunning = false
 		} else {
 			ptlog.Warnf("No listener for %s", methodName)
@@ -984,8 +1031,8 @@ func (c *Controller) Stop(methodName string) {
 
 	case V2RaySrtp:
 		if c.v2raySrtpRunning {
-			ptlog.Noticef("Shutting down %s", methodName)
-			go v2ray.StopSrtp()
+			ptlog.Noticef("Shutting down %s on port %d", methodName, c.v2raySrtpPort)
+			go v2ray.StopSrtpByPort(c.v2raySrtpPort)
 			c.v2raySrtpRunning = false
 		} else {
 			ptlog.Warnf("No listener for %s", methodName)
@@ -993,8 +1040,8 @@ func (c *Controller) Stop(methodName string) {
 
 	case V2RayWechat:
 		if c.v2rayWechatRunning {
-			ptlog.Noticef("Shutting down %s", methodName)
-			go v2ray.StopWechat()
+			ptlog.Noticef("Shutting down %s on port %d", methodName, c.v2rayWechatPort)
+			go v2ray.StopWechatByPort(c.v2rayWechatPort)
 			c.v2rayWechatRunning = false
 		} else {
 			ptlog.Warnf("No listener for %s", methodName)
@@ -1002,8 +1049,8 @@ func (c *Controller) Stop(methodName string) {
 
 	case V2RayHttp:
 		if c.v2rayHttpRunning {
-			ptlog.Noticef("Shutting down %s", methodName)
-			go v2ray.StopHttp()
+			ptlog.Noticef("Shutting down %s on port %d", methodName, c.v2rayHttpPort)
+			go v2ray.StopHttpByPort(c.v2rayHttpPort)
 			c.v2rayHttpRunning = false
 		} else {
 			ptlog.Warnf("No listener for %s", methodName)
@@ -1011,8 +1058,8 @@ func (c *Controller) Stop(methodName string) {
 
 	case XRayXhttp:
 		if c.xrayXhttpRunning {
-			ptlog.Noticef("Shutting down %s", methodName)
-			go xray.StopXrxh()
+			ptlog.Noticef("Shutting down %s on port %d", methodName, c.xrayXhttpPort)
+			go xray.StopXrxhByPort(c.xrayXhttpPort)
 			c.xrayXhttpRunning = false
 		} else {
 			ptlog.Warnf("No listener for %s", methodName)
@@ -1039,7 +1086,7 @@ func (c *Controller) Stop(methodName string) {
 		}
 
 	case Masque:
-		if c.echProxyRunning {
+		if c.masqueRunning {
 			ptlog.Noticef("Shutting down %s", methodName)
 			go c.masqueProxy.Stop()
 			c.masqueRunning = false
@@ -1098,21 +1145,18 @@ func findPort(port int) int {
 	return temp
 }
 
-// isPortAvailable - Checks to see if a given port is not in use.
+// isPortAvailable - Checks whether a given port can be bound.
+// Uses a bind attempt rather than a dial so that ports held by a shutting-down
+// process (bound but not yet listening) are correctly reported as unavailable.
 //
 // @param port The port to check.
 func isPortAvailable(port int) bool {
-	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-
-	conn, err := net.DialTimeout("tcp", address, 500*time.Millisecond)
-
+	l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
-		return true
+		return false
 	}
-
-	_ = conn.Close()
-
-	return false
+	l.Close()
+	return true
 }
 
 ///

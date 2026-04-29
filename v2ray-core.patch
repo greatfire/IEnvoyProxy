@@ -2,10 +2,10 @@
  app/tun/packetparse/udp_stub.go        |  25 ++
  common/protofilter/filter.go           |   9 +-
  domain2ip.go                           |  40 ++++
- envoy/v2ray.go                         | 419 +++++++++++++++++++++++++++++++++
+ envoy/v2ray.go                         | 430 +++++++++++++++++++++++++++++++++
  transport/internet/http/dialer.go      |  23 +-
- transport/internet/websocket/dialer.go |  19 +-
- 7 files changed, 532 insertions(+), 6 deletions(-)
+ transport/internet/websocket/dialer.go |  21 +-
+ 7 files changed, 544 insertions(+), 7 deletions(-)
 
 diff --git a/app/tun/packetparse/udp.go b/app/tun/packetparse/udp.go
 index 8e5cdd19..4f3f258f 100644
@@ -117,10 +117,10 @@ index 00000000..da1ad5c6
 +}
 diff --git a/envoy/v2ray.go b/envoy/v2ray.go
 new file mode 100644
-index 0000000..59befc3
+index 0000000..34a5a18
 --- /dev/null
 +++ b/envoy/v2ray.go
-@@ -0,0 +1,432 @@
+@@ -0,0 +1,430 @@
 +package v2ray
 +
 +// copied and modified from main/commands/run.go
@@ -142,10 +142,8 @@ index 0000000..59befc3
 +
 +import (
 +	"fmt"
-+	"os"
-+	"os/signal"
 +	"strings"
-+	"syscall"
++	"sync"
 +
 +	core "github.com/v2fly/v2ray-core/v5"
 +	_ "github.com/v2fly/v2ray-core/v5/main/distro/all"
@@ -153,10 +151,10 @@ index 0000000..59befc3
 +
 +const jsonV5 = "jsonv5"
 +
-+var osWsSignals = make(chan os.Signal, 1)
-+var osHttpSignals = make(chan os.Signal, 1)
-+var osWechatSignals = make(chan os.Signal, 1)
-+var osSrtpSignals = make(chan os.Signal, 1)
++var wsServers sync.Map
++var httpServers sync.Map
++var wechatServers sync.Map
++var srtpServers sync.Map
 +
 +// getInbound
 +//
@@ -404,22 +402,22 @@ index 0000000..59befc3
 +		return err
 +	}
 +
-+	go func(server *core.Instance) {
-+		defer func(server *core.Instance) {
-+			_ = server.Close()
-+		}(server)
-+
-+		{
-+			signal.Notify(osWsSignals, syscall.SIGTERM)
-+			<-osWsSignals
-+		}
-+	}(server)
-+
++	wsServers.Store(clientPort, server)
 +	return nil
 +}
 +
++func StopWsByPort(clientPort int) {
++	if val, ok := wsServers.LoadAndDelete(clientPort); ok {
++		_ = val.(*core.Instance).Close()
++	}
++}
++
 +func StopWs() {
-+	osWsSignals <- syscall.SIGTERM
++	wsServers.Range(func(key, value any) bool {
++		wsServers.Delete(key)
++		_ = value.(*core.Instance).Close()
++		return true
++	})
 +}
 +
 +// StartHttp - start v2ray, HTTP/2 transport
@@ -466,22 +464,22 @@ index 0000000..59befc3
 +		return err
 +	}
 +
-+	go func(server *core.Instance) {
-+		defer func(server *core.Instance) {
-+			_ = server.Close()
-+		}(server)
-+
-+		{
-+			signal.Notify(osHttpSignals, syscall.SIGTERM)
-+			<-osHttpSignals
-+		}
-+	}(server)
-+
++	httpServers.Store(clientPort, server)
 +	return nil
 +}
 +
++func StopHttpByPort(clientPort int) {
++	if val, ok := httpServers.LoadAndDelete(clientPort); ok {
++		_ = val.(*core.Instance).Close()
++	}
++}
++
 +func StopHttp() {
-+	osHttpSignals <- syscall.SIGTERM
++	httpServers.Range(func(key, value any) bool {
++		httpServers.Delete(key)
++		_ = value.(*core.Instance).Close()
++		return true
++	})
 +}
 +
 +// StartSrtp - start v2ray, QUIC/SRTP transport
@@ -501,22 +499,22 @@ index 0000000..59befc3
 +		return err
 +	}
 +
-+	go func(server *core.Instance) {
-+		defer func(server *core.Instance) {
-+			_ = server.Close()
-+		}(server)
-+
-+		{
-+			signal.Notify(osSrtpSignals, syscall.SIGTERM)
-+			<-osSrtpSignals
-+		}
-+	}(server)
-+
++	srtpServers.Store(clientPort, server)
 +	return nil
 +}
 +
++func StopSrtpByPort(clientPort int) {
++	if val, ok := srtpServers.LoadAndDelete(clientPort); ok {
++		_ = val.(*core.Instance).Close()
++	}
++}
++
 +func StopSrtp() {
-+	osSrtpSignals <- syscall.SIGTERM
++	srtpServers.Range(func(key, value any) bool {
++		srtpServers.Delete(key)
++		_ = value.(*core.Instance).Close()
++		return true
++	})
 +}
 +
 +// StartWechat - start v2ray, QUIC/Wechat-video transport
@@ -536,22 +534,22 @@ index 0000000..59befc3
 +		return err
 +	}
 +
-+	go func(server *core.Instance) {
-+		defer func(server *core.Instance) {
-+			_ = server.Close()
-+		}(server)
-+
-+		{
-+			signal.Notify(osWechatSignals, syscall.SIGTERM)
-+			<-osWechatSignals
-+		}
-+	}(server)
-+
++	wechatServers.Store(clientPort, server)
 +	return nil
 +}
 +
++func StopWechatByPort(clientPort int) {
++	if val, ok := wechatServers.LoadAndDelete(clientPort); ok {
++		_ = val.(*core.Instance).Close()
++	}
++}
++
 +func StopWechat() {
-+	osWechatSignals <- syscall.SIGTERM
++	wechatServers.Range(func(key, value any) bool {
++		wechatServers.Delete(key)
++		_ = value.(*core.Instance).Close()
++		return true
++	})
 +}
 diff --git a/transport/internet/http/dialer.go b/transport/internet/http/dialer.go
 index 8a9da0e4..c957e408 100644
@@ -595,10 +593,10 @@ index 8a9da0e4..c957e408 100644
  				return nil, err
  			}
 diff --git a/transport/internet/websocket/dialer.go b/transport/internet/websocket/dialer.go
-index 3fb229fc..9f7b2042 100644
+index 3fb229f..9deea95 100644
 --- a/transport/internet/websocket/dialer.go
 +++ b/transport/internet/websocket/dialer.go
-@@ -38,6 +38,17 @@ func init() {
+@@ -38,13 +38,24 @@ func init() {
  func dialWebsocket(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (net.Conn, error) {
  	wsSettings := streamSettings.ProtocolSettings.(*Config)
  
@@ -616,6 +614,14 @@ index 3fb229fc..9f7b2042 100644
  	dialer := &websocket.Dialer{
  		NetDial: func(network, addr string) (net.Conn, error) {
  			return internet.DialSystem(ctx, dest, streamSettings.SocketSettings)
+ 		},
+ 		ReadBufferSize:   4 * 1024,
+ 		WriteBufferSize:  4 * 1024,
+-		HandshakeTimeout: time.Second * 8,
++		HandshakeTimeout: time.Second * 15,
+ 	}
+ 
+ 	protocol := "ws"
 @@ -63,7 +74,11 @@ func dialWebsocket(ctx context.Context, dest net.Destination, streamSettings *in
  				return nil, newError("dial TLS connection failed").Base(err)
  			}

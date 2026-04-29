@@ -1,0 +1,271 @@
+diff --git a/dnstt-client/lib/client.go b/dnstt-client/lib/client.go
+index 53db62b..bdf944e 100644
+--- a/dnstt-client/lib/client.go
++++ b/dnstt-client/lib/client.go
+@@ -6,7 +6,6 @@ import (
+ 	"errors"
+ 	"flag"
+ 	"fmt"
+-	pt "gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/goptlib"
+ 	"io"
+ 	"io/ioutil"
+ 	"log"
+@@ -18,6 +17,8 @@ import (
+ 	"syscall"
+ 	"time"
+ 
++	pt "gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/goptlib"
++
+ 	utls "github.com/refraction-networking/utls"
+ 	"github.com/xtaci/kcp-go/v5"
+ 	"github.com/xtaci/smux"
+@@ -76,16 +77,16 @@ func SampleUTLSDistribution(spec string) (*utls.ClientHelloID, error) {
+ 	return ids[sampleWeighted(weights)], nil
+ }
+ 
+-func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
++func handle(local *net.TCPConn, sess *smux.Session, conv uint32, dbg *log.Logger) error {
+ 	stream, err := sess.OpenStream()
+ 	if err != nil {
+ 		return fmt.Errorf("session %08x opening stream: %v", conv, err)
+ 	}
+ 	defer func() {
+-		log.Printf("end stream %08x:%d", conv, stream.ID())
++		dbg.Printf("end stream %08x:%d", conv, stream.ID())
+ 		_ = stream.Close()
+ 	}()
+-	log.Printf("begin stream %08x:%d", conv, stream.ID())
++	dbg.Printf("begin stream %08x:%d", conv, stream.ID())
+ 
+ 	var wg sync.WaitGroup
+ 	wg.Add(2)
+@@ -119,7 +120,10 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
+ 	return err
+ }
+ 
+-func AcceptLoop(ln *pt.SocksListener, utlsClientHelloID *utls.ClientHelloID, shutdown chan struct{}, wg *sync.WaitGroup) {
++func AcceptLoop(ln *pt.SocksListener, utlsClientHelloID *utls.ClientHelloID, shutdown chan struct{}, wg *sync.WaitGroup, dbg *log.Logger) {
++	if dbg == nil {
++		dbg = log.New(ioutil.Discard, "", 0)
++	}
+ 	defer func() {
+ 		_ = ln.Close()
+ 	}()
+@@ -136,7 +140,7 @@ func AcceptLoop(ln *pt.SocksListener, utlsClientHelloID *utls.ClientHelloID, shu
+ 			log.Printf("SOCKS accept error: %s", err)
+ 			break
+ 		}
+-		log.Printf("SOCKS accepted: %v", local.Req)
++		dbg.Printf("SOCKS accepted: %v", local.Req)
+ 
+ 		wg.Add(1)
+ 		go func() {
+@@ -245,7 +249,7 @@ func AcceptLoop(ln *pt.SocksListener, utlsClientHelloID *utls.ClientHelloID, shu
+ 
+ 				return
+ 			}
+-			log.Printf("effective MTU %d", mtu)
++			dbg.Printf("effective MTU %d", mtu)
+ 
+ 			pconn = NewDNSPacketConn(pconn, remoteAddr, domain)
+ 
+@@ -262,10 +266,10 @@ func AcceptLoop(ln *pt.SocksListener, utlsClientHelloID *utls.ClientHelloID, shu
+ 
+ 				return
+ 			}
+-			log.Printf("begin session %08x", conn.GetConv())
++			dbg.Printf("begin session %08x", conn.GetConv())
+ 
+ 			defer func() {
+-				log.Printf("end session %08x", conn.GetConv())
++				dbg.Printf("end session %08x", conn.GetConv())
+ 				_ = conn.Close()
+ 			}()
+ 
+@@ -327,7 +331,7 @@ func AcceptLoop(ln *pt.SocksListener, utlsClientHelloID *utls.ClientHelloID, shu
+ 			go func() {
+ 				defer close(handler)
+ 
+-				err := handle(local.Conn.(*net.TCPConn), sess, conn.GetConv())
++				err := handle(local.Conn.(*net.TCPConn), sess, conn.GetConv(), dbg)
+ 				if err != nil {
+ 					log.Printf("handle: %v", err)
+ 				}
+@@ -335,9 +339,9 @@ func AcceptLoop(ln *pt.SocksListener, utlsClientHelloID *utls.ClientHelloID, shu
+ 
+ 			select {
+ 			case <-shutdown:
+-				log.Println("Received shutdown signal")
++				dbg.Println("Received shutdown signal")
+ 			case <-handler:
+-				log.Println("Handler ended")
++				dbg.Println("Handler ended")
+ 			}
+ 
+ 			return
+@@ -388,7 +392,7 @@ func Start(listenAddr string, utlsClientHelloID *utls.ClientHelloID) {
+ 				break
+ 			}
+ 
+-			go AcceptLoop(ln, utlsClientHelloID, shutdown, &wg)
++			go AcceptLoop(ln, utlsClientHelloID, shutdown, &wg, nil)
+ 
+ 			pt.Cmethod(methodName, ln.Version(), ln.Addr())
+ 			listeners = append(listeners, ln)
+diff --git a/dnstt-client/lib/dns.go b/dnstt-client/lib/dns.go
+index c4ffedd..b9273fb 100644
+--- a/dnstt-client/lib/dns.go
++++ b/dnstt-client/lib/dns.go
+@@ -9,6 +9,7 @@ import (
+ 	"io"
+ 	"log"
+ 	"net"
++	"sync"
+ 	"time"
+ 
+ 	"www.bamsoftware.com/git/dnstt.git/dns"
+@@ -62,6 +63,14 @@ type DNSPacketConn struct {
+ 	// Sending on pollChan permits sendLoop to send an empty polling query.
+ 	// sendLoop also does its own polling according to a time schedule.
+ 	pollChan chan struct{}
++	// done is closed by Close() to signal sendLoop and recvLoop to exit.
++	done      chan struct{}
++	closeOnce sync.Once
++	// transport is the underlying packet conn (e.g. HTTPPacketConn) used to
++	// actually send and receive DNS messages. Closing DNSPacketConn must also
++	// close transport so that its internal goroutines (e.g. http.go sendLoop)
++	// are terminated immediately rather than leaking until OS-level timeout.
++	transport net.PacketConn
+ 	// QueuePacketConn is the direct receiver of ReadFrom and WriteTo calls.
+ 	// recvLoop and sendLoop take the messages out of the receive and send
+ 	// queues and actually put them on the network.
+@@ -79,6 +88,8 @@ func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name)
+ 		clientID:        clientID,
+ 		domain:          domain,
+ 		pollChan:        make(chan struct{}, pollLimit),
++		done:            make(chan struct{}),
++		transport:       transport,
+ 		QueuePacketConn: turbotunnel.NewQueuePacketConn(clientID, 0),
+ 	}
+ 	go func() {
+@@ -96,6 +107,16 @@ func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name)
+ 	return c
+ }
+ 
++// Close shuts down the DNSPacketConn and the underlying transport.
++// It signals the sendLoop to exit immediately (via the done channel) and
++// closes the transport (e.g. HTTPPacketConn) so that its in-flight HTTP
++// requests are cancelled and its internal goroutines terminate promptly.
++func (c *DNSPacketConn) Close() error {
++	c.closeOnce.Do(func() { close(c.done) })
++	_ = c.transport.Close()
++	return c.QueuePacketConn.Close()
++}
++
+ // dnsResponsePayload extracts the downstream payload of a DNS response, encoded
+ // into the RDATA of a TXT RR. It returns nil if the message doesn't pass format
+ // checks, or if the name in its Question entry is not a subdomain of domain.
+@@ -359,9 +380,13 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error
+ 		// Prioritize sending an actual data packet from outgoing. Only
+ 		// consider a poll when outgoing is empty.
+ 		select {
++		case <-c.done:
++			return nil
+ 		case p = <-outgoing:
+ 		default:
+ 			select {
++			case <-c.done:
++				return nil
+ 			case p = <-outgoing:
+ 			case <-c.pollChan:
+ 			case <-pollTimer.C:
+diff --git a/dnstt-client/lib/http.go b/dnstt-client/lib/http.go
+index 1711725..63c2dbd 100644
+--- a/dnstt-client/lib/http.go
++++ b/dnstt-client/lib/http.go
+@@ -2,6 +2,8 @@ package dnstt_client
+ 
+ import (
+ 	"bytes"
++	"context"
++	"errors"
+ 	"fmt"
+ 	"io"
+ 	"io/ioutil"
+@@ -37,6 +39,12 @@ type HTTPPacketConn struct {
+ 	// "https://doh.example/dns-query".
+ 	urlString string
+ 
++	// ctx/cancel allow all in-flight HTTP requests to be immediately
++	// cancelled when Close() is called, rather than waiting for the
++	// per-request HTTP client timeout.
++	ctx    context.Context
++	cancel context.CancelFunc
++
+ 	// notBefore, if not zero, is a time before which we may not send any
+ 	// queries; queries are buffered or dropped until that time. notBefore
+ 	// is set when we get a 429 Too Many Requests HTTP response or other
+@@ -60,12 +68,15 @@ type HTTPPacketConn struct {
+ // path components; e.g., "/dns-query". numSenders is the number of concurrent
+ // sender-receiver goroutines to run.
+ func NewHTTPPacketConn(rt http.RoundTripper, urlString string, numSenders int) (*HTTPPacketConn, error) {
++	ctx, cancel := context.WithCancel(context.Background())
+ 	c := &HTTPPacketConn{
+ 		client: &http.Client{
+ 			Transport: rt,
+ 			Timeout:   1 * time.Minute,
+ 		},
+ 		urlString:       urlString,
++		ctx:             ctx,
++		cancel:          cancel,
+ 		QueuePacketConn: turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, 0),
+ 	}
+ 	for i := 0; i < numSenders; i++ {
+@@ -74,10 +85,17 @@ func NewHTTPPacketConn(rt http.RoundTripper, urlString string, numSenders int) (
+ 	return c, nil
+ }
+ 
++// Close cancels all in-flight HTTP requests immediately, then closes the
++// underlying QueuePacketConn.
++func (c *HTTPPacketConn) Close() error {
++	c.cancel()
++	return c.QueuePacketConn.Close()
++}
++
+ // send sends a message in an HTTP request, and queues the body HTTP response to
+ // be returned from a future call to ReadFrom.
+ func (c *HTTPPacketConn) send(p []byte) error {
+-	req, err := http.NewRequest("POST", c.urlString, bytes.NewReader(p))
++	req, err := http.NewRequestWithContext(c.ctx, "POST", c.urlString, bytes.NewReader(p))
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -156,7 +174,7 @@ func (c *HTTPPacketConn) sendLoop() {
+ 		}
+ 
+ 		err := c.send(p)
+-		if err != nil {
++		if err != nil && !errors.Is(err, context.Canceled) {
+ 			log.Printf("sendLoop: %v", err)
+ 		}
+ 	}
+diff --git a/dnstt-client/lib/utls.go b/dnstt-client/lib/utls.go
+index e4e970d..cc80c3b 100644
+--- a/dnstt-client/lib/utls.go
++++ b/dnstt-client/lib/utls.go
+@@ -43,11 +43,15 @@ var UtlsClientHelloIDMap = []struct {
+ 	{"Chrome_100", &utls.HelloChrome_100},
+ 	{"Chrome_102", &utls.HelloChrome_102},
+ 	{"Chrome_120", &utls.HelloChrome_120},
++	{"Chrome_131", &utls.HelloChrome_131},
++	{"Chrome_133", &utls.HelloChrome_133},
+ 	{"iOS", &utls.HelloIOS_Auto},
+ 	{"iOS_11_1", &utls.HelloIOS_11_1},
+ 	{"iOS_12_1", &utls.HelloIOS_12_1},
+ 	{"iOS_13", &utls.HelloIOS_13},
+ 	{"iOS_14", &utls.HelloIOS_14},
++	{"Safari_16_0", &utls.HelloSafari_16_0},
++	{"Edge_106", &utls.HelloEdge_106},
+ }
+ 
+ // utlsLookup returns a *utls.ClientHelloID from utlsClientHelloIDMap by a
